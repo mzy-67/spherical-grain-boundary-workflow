@@ -33,7 +33,6 @@ The Bayesian search uses five independent variables: a displacement of grain 1 a
 - `inputs/bulk_energy_reference.lammpstrj`: bulk atom-resolved reference data used by the workflow.
 - `configs/workflow.example.yaml`: portable configuration template.
 - `legacy/gbmaker2_original.py`: pre-publication source snapshot retained for provenance; one commented user-specific path was sanitized.
-- `analysis/`: locations for the energy-ML, transport, softness, cavity-network, and figure-reproduction code.
 
 Large trajectory data, optimized structures, per-ion descriptors, trained models, and figure source data should be deposited separately as a Zenodo dataset. They are intentionally not tracked in Git.
 
