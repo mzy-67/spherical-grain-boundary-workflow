@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated article and archived software release."
+title: "Scalable Spherical Grain-Boundary Workflow for LLZO"
+type: software
+version: 0.1.0
+date-released: 2026-09-10
+license: MIT
+authors:
+  - family-names: Man
+    given-names: Ziyi
+  - family-names: Xie
+    given-names: Yaoshu
+  - family-names: Li
+    given-names: Zhanlin
+  - family-names: Jiang
+    given-names: Lu
+  - family-names: Hou
+    given-names: Tingzheng
+keywords:
+  - LLZO
+  - grain boundaries
+  - molecular dynamics
+  - DeePMD
+  - Jobflow
+  - solid-state electrolytes
+repository-code: "https://github.com/mzy-67/LLZO-spherical-GB"

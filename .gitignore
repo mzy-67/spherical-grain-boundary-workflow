@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+build/
+dist/
+.venv/
+
+# Notebooks and OS
+.ipynb_checkpoints/
+.DS_Store
+
+# Local/HPC configuration
+configs/*.local.yaml
+configs/workflow.hpc.yaml
+.env
+*.secret
+
+# Potentials and large simulation data
+*.pb
+*.pth
+*.pt
+*.ckpt
+*.lammpstrj
+!inputs/bulk_energy_reference.lammpstrj
+traj*/
+trajectories/
+outputs/
+runs/
+jobflow_remote/
+
+# LAMMPS and scheduler outputs
+log*.lammps
+stdout.*
+stderr.*
+slurm-*.out
+*.restart
+
+# Temporary analysis files
+*.pkl
+*.joblib
+*.npz
+*.h5
+*.hdf5
+*.parquet

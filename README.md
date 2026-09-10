@@ -1,2 +1,118 @@
-# LLZO-spherical-GB
-Codes for constructing and analyzing an ensemble of spherical grain boundaries in LLZO.
+# Scalable Spherical Grain-Boundary Workflow for LLZO
+
+This repository contains the Jobflow-based workflow used to construct, optimize, anneal, and simulate an ensemble of spherical grain-boundary (GB) models of cubic Li7La3Zr2O12 (LLZO).
+
+The workflow supports the study **An Ensemble of Spherical Grain-Boundary Models Enables Scalable Atomistic Investigation of LLZO Grain Boundaries** by Ziyi Man, Yaoshu Xie, Zhanlin Li, Lu Jiang, and Tingzheng Hou.
+
+## Workflow
+
+```text
+Bulk LLZO structure
+        |
+Macroscopic GB geometry (misorientation and GB-plane normal)
+        |
+Construction of two spherical hemispherical grains
+        |
+Five-dimensional Bayesian optimization
+        |
+Local simulated annealing and structural relaxation
+        |
+MD at 973.15, 1073.15, 1173.15, and 1273.15 K
+        |
+GB energy, MSD, diffusion, conductivity, and anisotropy analysis
+```
+
+The Bayesian search uses five independent variables: a displacement of grain 1 along the GB normal, three translations of grain 2, and the interfacial gap. The selected solution is recorded as seven Cartesian/interface parameters `[x1, y1, z1, x2, y2, z2, gap]`.
+
+## Repository contents
+
+- `src/jbfuncs/gbmaker2.py`: spherical GB construction and Jobflow workflow.
+- `scripts/submit_gb_workflow.py`: configuration-driven batch submission script.
+- `inputs/gb_orientations.csv`: 1,291 sampled LLZO GB geometries.
+- `inputs/sorted_optimized_bulk_POSCAR`: bulk LLZO input structure.
+- `inputs/bulk_energy_reference.lammpstrj`: bulk atom-resolved reference data used by the workflow.
+- `configs/workflow.example.yaml`: portable configuration template.
+- `legacy/gbmaker2_original.py`: pre-publication source snapshot retained for provenance; one commented user-specific path was sanitized.
+- `analysis/`: locations for the energy-ML, transport, softness, cavity-network, and figure-reproduction code.
+
+Large trajectory data, optimized structures, per-ion descriptors, trained models, and figure source data should be deposited separately as a Zenodo dataset. They are intentionally not tracked in Git.
+
+## Software environment used for the reported calculations
+
+- Python 3.12.12
+- NumPy 2.1.3
+- pandas 2.3.3
+- pymatgen 2025.10.7
+- jobflow 0.2.1
+- jobflow-remote 0.1.8
+- qtoolkit 0.1.6
+- scikit-optimize 0.10.2
+- interfacemaster 1.1.7
+- matplotlib 3.10.8
+- DeePMD-kit 3.0.2
+- LAMMPS 29 Aug 2024 Update 1
+
+The exact conda package record captured from the HPC environment can be added to a release as `environment-lock.yml`.
+
+## Installation
+
+```bash
+conda env create -f environment.yml
+conda activate llzo-gb
+python -m pip install -e .
+```
+
+`jobflow-remote` and `qtoolkit` may require the installation method used by your HPC facility if they are not available from your configured package channels.
+
+## Interatomic potential
+
+The DeePMD checkpoint is not redistributed in this repository. Set `potential.checkpoint_file` in a local configuration file to an authorized copy of the Li-La-Zr-O model used in the study. Cite the original potential publication when using it. Do not commit model files unless their redistribution license permits it.
+
+## Configure a run
+
+Copy the public template to a local configuration:
+
+```bash
+cp configs/workflow.example.yaml configs/workflow.local.yaml
+```
+
+Edit the checkpoint path and Jobflow-remote settings. `workflow.local.yaml` is excluded by `.gitignore` because it may contain cluster-specific paths.
+
+Validate without submitting:
+
+```bash
+python scripts/submit_gb_workflow.py \
+  --config configs/workflow.local.yaml \
+  --start-row 0 --stop-row 1 --dry-run
+```
+
+Submit rows 1250 through 1264 (zero-based indexing; `stop-row` is exclusive):
+
+```bash
+python scripts/submit_gb_workflow.py \
+  --config configs/workflow.local.yaml \
+  --start-row 1250 --stop-row 1265
+```
+
+## Reproducibility and provenance
+
+The public module contains two non-scientific corrections relative to the preserved source snapshot:
+
+1. A helper now refers to its `structure` argument rather than an undefined global variable.
+2. A commented user-specific output path was replaced with a portable example path.
+
+A pre-publication source snapshot is retained in `legacy/gbmaker2_original.py`; only a commented user-specific path was sanitized. No scientific constants or production calculation settings were changed during repository packaging.
+
+Before tagging the archival release, verify the effective volume used for the Nernst-Einstein conversion against the final manuscript method and confirm that the released source is the exact revision used for the reported results.
+
+## Data availability
+
+The corresponding Zenodo dataset DOI will be added here after deposition. It should contain optimized structures, GB metadata, transport summaries, per-ion mobility/softness data, cavity-network data, and source data for all figures.
+
+## Citation
+
+Citation metadata are provided in `CITATION.cff`. After GitHub-Zenodo archiving, add the software DOI to both `CITATION.cff` and this README.
+
+## License and attribution
+
+The code is distributed under the MIT License. The original JobflowFunctions copyright notice is retained. See `CONTRIBUTORS.md` for authorship and provenance.

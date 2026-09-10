@@ -1,0 +1,3 @@
+orientation_file: orientation.csv
+row: 0
+notes: "Use with configs/workflow.local.yaml for a one-GB smoke test."

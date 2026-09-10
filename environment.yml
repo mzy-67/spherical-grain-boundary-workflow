@@ -1,0 +1,20 @@
+name: llzo-gb
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - numpy=2.1
+  - pandas=2.3
+  - matplotlib=3.10
+  - pyyaml>=6
+  - pip
+  - pip:
+      - pymatgen==2025.10.7
+      - jobflow==0.2.1
+      - jobflow-remote==0.1.8
+      - qtoolkit==0.1.6
+      - scikit-optimize==0.10.2
+      - interfacemaster==1.1.7
+      - deepmd-kit==3.0.2
+      - -e .

@@ -1,0 +1,26 @@
+inputs:
+  orientation_file: inputs/gb_orientations.csv
+  structure_file: inputs/sorted_optimized_bulk_POSCAR
+  bulk_energy_trajectory: inputs/bulk_energy_reference.lammpstrj
+
+potential:
+  checkpoint_file: /absolute/path/to/LLZO-c.pb
+
+grain_boundary:
+  sphere_radius: 45.0
+  vacuum_thickness: 20.0
+  energy_radius: 35.0
+
+optimization:
+  trials: 200
+  random_seed: 42
+
+submission:
+  worker: llzo_worker
+  project: std
+  partition: gpu
+  nodes: 1
+  processes_per_node: 1
+  gpus_per_job: 1
+  cpus_per_gpu: 10
+  memory: 32G
