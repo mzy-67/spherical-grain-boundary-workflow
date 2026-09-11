@@ -8,13 +8,14 @@ from pymatgen.transformations.standard_transformations \
 import SupercellTransformation
 from pymatgen.transformations.standard_transformations import RotationTransformation
 from pymatgen.core.lattice import Lattice
+from pymatgen.core import Element
 from interfacemaster.cellcalc import get_pri_vec_inplane, get_right_hand
 from interfacemaster.interface_generator import cross_plane
 from interfacemaster.cellcalc import rot
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from jobflow import Flow, Response, job, Maker
-from typing import Callable, Dict, Any, List
+from typing import Callable, Dict, Any, List, Mapping, Optional, Sequence
 from pymatgen.io.cif import CifWriter, CifParser
 import json
 from dataclasses import dataclass
@@ -22,11 +23,25 @@ from typing import List, Tuple
 import math
 import matplotlib.pyplot as plt
 from .runtime import run_lammps, spherical_slab_intersection_volume
+from .geometry import inclusive_radius_grid, rotation_to_z
 #按照最小的位移去移动
-def shift_slab_to_origin(slab):
-    coords = np.array([i.coords for i in slab if i.label == 'Zr'])
-    lengths = np.linalg.norm(coords, axis = 1)
-    shift = - coords[lengths == min(lengths)][0] + 1e-4
+def species_symbol(specie) -> str:
+    """Return a plain element symbol for a pymatgen specie or string."""
+    return getattr(specie, "symbol", str(specie))
+
+
+def shift_slab_to_origin(slab, anchor_species: Optional[str] = None):
+    """Translate the nearest selected atom to the origin.
+
+    ``anchor_species`` is optional.  Leaving it unset makes the geometry code
+    material agnostic; setting it (for example to ``Zr`` in the LLZO example)
+    reproduces the historical anchoring convention.
+    """
+    candidates = [site for site in slab if anchor_species is None or species_symbol(site.specie) == anchor_species]
+    if not candidates:
+        raise ValueError(f"No sites found for origin anchor species {anchor_species!r}")
+    coords = np.array([site.coords for site in candidates])
+    shift = -coords[np.argmin(np.linalg.norm(coords, axis=1))] + 1e-4
     tt = TranslateSitesTransformation(np.arange(len(slab)), shift, vector_in_frac_coords=False)
     return tt.apply_transformation(slab)
 #第一，abc矩阵的读取需要注意，第二输出矩阵 = 原始矩阵的正交归一化版本的转置
@@ -185,61 +200,11 @@ def add_surface_site_property(structure, rstar):
     dyn_mtx[dists > rstar] = [False, False, False]
     return structure.add_site_property('selective_dynamics', dyn_mtx)
 
-def rotation_to_z(vector):
-    """
-    另一种实现方法：通过构建正交基
-
-    Parameters:
-    -----------
-    vector : array-like, shape (3,)
-        输入的三维向量
-
-    Returns:
-    --------
-    R : ndarray, shape (3, 3)
-        旋转矩阵
-    """
-    vector = np.array(vector, dtype=float)
-    norm = np.linalg.norm(vector)
-
-    if norm < 1e-10:
-        raise ValueError("Input vector cannot be zero vector")
-
-    v = vector / norm
-
-    # 如果已经指向 z 轴方向
-    if np.allclose(v, [0, 0, 1]):
-        return np.eye(3)
-    if np.allclose(v, [0, 0, -1]):
-        return np.array([[-1, 0, 0],
-                          [0, -1, 0],
-                          [0, 0, 1]])
-
-    # 构建新的正交基，其中 v 作为 z 轴
-    # 选择一个与 v 不平行的向量
-    if abs(v[0]) < 0.9:
-        x_axis = np.array([1, 0, 0])
-    else:
-        x_axis = np.array([0, 1, 0])
-
-    # Gram-Schmidt 正交化
-    z_new = v  # 新基的 z 轴
-    y_new = np.cross(z_new, x_axis)
-    y_new = y_new / np.linalg.norm(y_new)
-    x_new = np.cross(y_new, z_new)
-
-    # 构建从标准基到新基的旋转矩阵
-    # 注意：我们要的是从新基到标准基的旋转，所以转置
-    R_new_to_std = np.column_stack([x_new, y_new, z_new])
-
-    # 但我们需要的是将标准基的 z 轴旋转到 v 方向
-    # 所以需要逆矩阵（对于旋转矩阵，逆矩阵等于转置）
-    R = R_new_to_std.T
-    return R
-
 class SphereGenerator:
-    def __init__(self, structure):
-        self.structure = shift_slab_to_origin(get_symmetrized_structure(structure))
+    def __init__(self, structure, anchor_species: Optional[str] = None):
+        self.structure = shift_slab_to_origin(
+            get_symmetrized_structure(structure), anchor_species=anchor_species
+        )
 
     def get_hemisphere(self, r, dr, dxdydz = [0,0,0], R=np.eye(3), normal = [0,0,1], up = True):
         supercell, dims = replicate_to_sphere_size(self.structure, r + dr)
@@ -258,55 +223,58 @@ class SphereGenerator:
         return rmt.apply_transformation(sphere)
 
 class SphereGBGenerator:
-    def __init__(self, strcture, r, dr):
+    def __init__(self, strcture, r, dr, anchor_species: Optional[str] = None, type_map: Optional[Mapping[str, int]] = None):
         self.structure = strcture
         self.r = r
         self.dr = dr
+        self.anchor_species = anchor_species
+        self.type_map = type_map
 
     def get_sphere_GB(self, R,
                           normal,
                           dxdydz_1 ,
                           dxdydz_2,
                           gap):
-        sphg_1 = SphereGenerator(self.structure)
+        sphg_1 = SphereGenerator(self.structure, self.anchor_species)
         hemisphere_1 = sphg_1.get_hemisphere(self.r, self.dr, dxdydz_1, np.eye(3), normal, True)
         hemisphere_1 = get_rotated_structure(hemisphere_1, rotation_to_z(normal))
         h_1=to_cubic_lattice_structure(hemisphere_1, 2*(self.r+self.dr))
         lattice_1 = np.array(h_1.lattice.matrix)      # 和你函数里的 lattice 对应
         atoms_1 = np.array(h_1.frac_coords)           # 和你函数里的 atoms 对应
-        elements_1 = np.array([str(sp) for sp in h_1.species])  # 和你函数里的 elements 对应
-        write_LAMMPS(lattice=lattice_1,atoms=atoms_1,elements=elements_1,filename="hemisphere_1.data",orthogonal=False)
+        elements_1 = np.array([species_symbol(sp) for sp in h_1.species])  # 和你函数里的 elements 对应
+        write_LAMMPS(lattice=lattice_1, atoms=atoms_1, elements=elements_1, filename="hemisphere_1.data", orthogonal=False, type_map=self.type_map)
         np.savetxt('h1_site_indices', h_1.site_properties['site_labels'], fmt = '%i')
         #hemisphere_1.to_file('1_POSCAR')
-        sphg_2 = SphereGenerator(self.structure)
+        sphg_2 = SphereGenerator(self.structure, self.anchor_species)
         hemisphere_2 = sphg_2.get_hemisphere(self.r, self.dr, dxdydz_2, R, normal,  False)
         hemisphere_2 = get_rotated_structure(hemisphere_2, rotation_to_z(normal))
         #hemisphere_2.to_file('2_POSCAR')
         h_2=to_cubic_lattice_structure(hemisphere_2, 2*(self.r+self.dr))
         lattice_2 = np.array(h_2.lattice.matrix)      # 和你函数里的 lattice 对应
         atoms_2 = np.array(h_2.frac_coords)           # 和你函数里的 atoms 对应
-        elements_2 = np.array([str(sp) for sp in h_2.species])  # 和你函数里的 elements 对应
-        write_LAMMPS(lattice=lattice_2,atoms=atoms_2,elements=elements_2,filename="hemisphere_2.data",orthogonal=False)
+        elements_2 = np.array([species_symbol(sp) for sp in h_2.species])  # 和你函数里的 elements 对应
+        write_LAMMPS(lattice=lattice_2, atoms=atoms_2, elements=elements_2, filename="hemisphere_2.data", orthogonal=False, type_map=self.type_map)
         np.savetxt('h2_site_indices', h_2.site_properties['site_labels'], fmt = '%i')
         cb_structure = combine_two_structures(hemisphere_1, hemisphere_2, gap)
         return to_cubic_lattice_structure(cb_structure, 2*(self.r+self.dr))
 
 class SphereGBGenerator_bo:
-    def __init__(self, strcture, r, dr):
+    def __init__(self, strcture, r, dr, anchor_species: Optional[str] = None):
         self.structure = strcture
         self.r = r
         self.dr = dr
+        self.anchor_species = anchor_species
 
     def get_sphere_GB(self, R,
                           normal,
                           dxdydz_1,
                           dxdydz_2,
                           gap):
-        sphg_1 = SphereGenerator(self.structure)
+        sphg_1 = SphereGenerator(self.structure, self.anchor_species)
         hemisphere_1 = sphg_1.get_hemisphere(self.r, self.dr, dxdydz_1, np.eye(3), normal, True)
         hemisphere_1 = get_rotated_structure(hemisphere_1, rotation_to_z(normal))
         #hemisphere_1.to_file('1_POSCAR')
-        sphg_2 = SphereGenerator(self.structure)
+        sphg_2 = SphereGenerator(self.structure, self.anchor_species)
         hemisphere_2 = sphg_2.get_hemisphere(self.r, self.dr, dxdydz_2, R, normal,  False)
         hemisphere_2 = get_rotated_structure(hemisphere_2, rotation_to_z(normal))
         #hemisphere_2.to_file('2_POSCAR')
@@ -318,17 +286,21 @@ def write_LAMMPS(
         atoms,
         elements,
         filename='lmp_atoms_file',
-        orthogonal=False):
-    """
-    write LAMMPS input atom file file of a supercell
-    """
-    # ------------ 自己指定元素和类型映射 ------------
-    # 想要 Li, La, Zr, O 分别是 1,2,3,4
-    type_map = {"Li": 1, "La": 2, "Zr": 3, "O": 4}
-    # 检查有没有元素不在映射里
-    unknown = set(np.unique(elements)) - set(type_map.keys())
+        orthogonal=False,
+        type_map: Optional[Mapping[str, int]] = None):
+    """Write a LAMMPS atomic data file with a deterministic species map."""
+    elements = np.asarray([species_symbol(element) for element in elements])
+    if type_map is None:
+        ordered_species = list(dict.fromkeys(elements.tolist()))
+        type_map = {symbol: index + 1 for index, symbol in enumerate(ordered_species)}
+    else:
+        type_map = {str(symbol): int(index) for symbol, index in type_map.items()}
+    expected = list(range(1, len(type_map) + 1))
+    if sorted(type_map.values()) != expected:
+        raise ValueError(f"LAMMPS type IDs must be contiguous and one-based: {type_map}")
+    unknown = set(np.unique(elements)) - set(type_map)
     if unknown:
-        raise ValueError(f"这些元素没有在 type_map 里定义: {unknown}")
+        raise ValueError(f"Species missing from type_map: {sorted(unknown)}")
     # list of elements（按 type 顺序只是为了写文件 header 时好看）
     items = sorted(type_map.items(), key=lambda kv: kv[1])
     element_species = np.array([k for k, v in items])
@@ -666,7 +638,7 @@ from tqdm.auto import tqdm
 import shutil
 
 @dataclass
-class SpheregbBOMaker(Maker):
+class SphericalGBWorkflowMaker(Maker):
     #BO args
     name: str = 'Sphere GB BO'
     trials: int = 10
@@ -675,10 +647,22 @@ class SpheregbBOMaker(Maker):
     acq_optimizer: str = 'lbfgs'
     random_state: int = 42
     metadata: Dict[str, Any] = None
-    #GB args
+    # Material and potential settings
     crystal_structure: Structure = None
-    check_point_file: str = None
+    check_point_file: Optional[str] = None
     bulk_energy_traj_file: str = None
+    species_order: Optional[Sequence[str]] = None
+    species_masses: Mapping[str, float] = field(default_factory=dict)
+    mobile_species: Optional[str] = None
+    charge_number: float = 1.0
+    origin_anchor_species: Optional[str] = None
+    pair_style: str = "deepmd"
+    pair_style_args: str = "{checkpoint_file}"
+    pair_coeff: str = "* *"
+    run_transport: bool = True
+    anneal_temperature_K: float = 1200.0
+    anneal_equilibration_steps: int = 1000
+    anneal_quench_steps: int = 20000
     sphere_R: float = 50
     vaccum_thickness: float = 20
     gb_r: float = 40
@@ -696,6 +680,52 @@ class SpheregbBOMaker(Maker):
     msd_fit_min_ps: float = 10.0
     msd_fit_max_ps: float = 50.0
     msd_temperatures_K: Tuple[float, ...] = (973.15, 1073.15, 1173.15, 1273.15)
+
+    def resolved_species_order(self) -> Tuple[str, ...]:
+        configured = tuple(self.species_order or ())
+        if configured:
+            order = configured
+        else:
+            order = tuple(dict.fromkeys(species_symbol(sp) for sp in self.crystal_structure.species))
+        present = {species_symbol(sp) for sp in self.crystal_structure.species}
+        missing = present.difference(order)
+        extra = set(order).difference(present)
+        if missing or extra:
+            raise ValueError(f"species_order mismatch; missing={sorted(missing)}, extra={sorted(extra)}")
+        if self.mobile_species is not None and self.mobile_species not in order:
+            raise ValueError(f"mobile_species {self.mobile_species!r} is not in species_order {order}")
+        return order
+
+    def resolved_mobile_species(self) -> str:
+        if self.mobile_species is None:
+            raise ValueError("mobile_species is required for MSD/conductivity analysis")
+        return self.mobile_species
+
+    def species_type_map(self) -> Dict[str, int]:
+        return {symbol: index + 1 for index, symbol in enumerate(self.resolved_species_order())}
+
+    def lammps_mass_commands(self) -> str:
+        lines = []
+        for symbol, type_id in self.species_type_map().items():
+            mass = float(self.species_masses[symbol]) if symbol in self.species_masses else float(Element(symbol).atomic_mass)
+            if not np.isfinite(mass) or mass <= 0:
+                raise ValueError(f"Invalid atomic mass for {symbol}: {mass}")
+            lines.append(f"mass {type_id} {mass:.10g} # {symbol}")
+        return "\n".join(lines)
+
+    def lammps_element_names(self) -> str:
+        return " ".join(self.resolved_species_order())
+
+    def lammps_pair_style_command(self) -> str:
+        args = self.pair_style_args.format(checkpoint_file=self.check_point_file or "").strip()
+        return f"pair_style     {self.pair_style}{(' ' + args) if args else ''}"
+
+    def lammps_pair_coeff_command(self) -> str:
+        return f"pair_coeff     {self.pair_coeff}".rstrip()
+
+    def energy_radii(self) -> np.ndarray:
+        return inclusive_radius_grid(self.gb_r)
+
     def lammps_input_static_energy(self):
         lammps_input = f"""
 # NANOPARTICLE MELTING
@@ -705,13 +735,10 @@ atom_style      atomic
 dimension       3
 boundary        f f f
 read_data       gb.data
-mass 1 6.941
-mass 2 138.9055
-mass 3 91.224
-mass 4 15.9994
+{self.lammps_mass_commands()}
 #------------------FORCE FIELDS------------------
-pair_style     deepmd {self.check_point_file}
-pair_coeff     * *
+{self.lammps_pair_style_command()}
+{self.lammps_pair_coeff_command()}
 neighbor        6.0 bin
 neigh_modify   every 10 delay 0 check no
 #------------------FIX OUTER ATOMS------------------
@@ -727,7 +754,7 @@ thermo_style custom step etotal pe ke temp press vol
 comm_modify cutoff 24.00
 #------------------ENERGY CALCULATION AND OUTPUT------------------
 dump            atom_pe all custom 1 gb_energy.lammpstrj id element type x y z c_energy
-dump_modify     atom_pe sort id element Li La Zr O
+dump_modify     atom_pe sort id element {self.lammps_element_names()}
 run             0  # 运行0步触发输出
 """
         return lammps_input
@@ -741,13 +768,10 @@ atom_style      atomic
 dimension       3
 boundary        f f f
 read_data       gb_final.data
-mass 1 6.941
-mass 2 138.9055
-mass 3 91.224
-mass 4 15.9994
+{self.lammps_mass_commands()}
 #------------------FORCE FIELDS------------------
-pair_style     deepmd {self.check_point_file}
-pair_coeff     * *
+{self.lammps_pair_style_command()}
+{self.lammps_pair_coeff_command()}
 neighbor        6.0 bin
 neigh_modify   every 5 delay 0 check no
 #------------------FIX OUTER ATOMS------------------
@@ -795,7 +819,7 @@ minimize 0.0 0.01 1000000 10000000
 unfix freeze
 
 dump            d_unfixed_pre unnfixed custom 1 unfixed_preanneal.lammpstrj id element type x y z c_energy c_v[1] c_v[2]
-dump_modify     d_unfixed_pre sort id element Li La Zr O
+dump_modify     d_unfixed_pre sort id element {self.lammps_element_names()}
 run             0
 undump          d_unfixed_pre
 
@@ -808,7 +832,7 @@ variable e_stp equal "{equilibriate_steps}/1000"
 thermo 50
 thermo_style custom step c_ctemp c_total_energy
 #dump            atom_pe all custom 100 outputs/gb.lammpstrj.* id #element type x y z c_energy
-#dump_modify     atom_pe sort id element Li La Zr O
+#dump_modify     atom_pe sort id element {self.lammps_element_names()}
 #melt
 fix f_nvt unfixed nvt temp {equilibriate_T} {equilibriate_T} $(100.0*dt)
 run {equilibriate_steps}
@@ -821,7 +845,7 @@ unfix frigid_up
 unfix ffix_low
 
 dump            d_unfixed_post unnfixed custom 1 unfixed_postanneal.lammpstrj id element type x y z c_energy c_v[1] c_v[2]
-dump_modify     d_unfixed_post sort id element Li La Zr O
+dump_modify     d_unfixed_post sort id element {self.lammps_element_names()}
 run             0
 undump          d_unfixed_post
 
@@ -842,7 +866,7 @@ thermo_modify flush yes
 minimize 0.0 0.01 1000000 10000000
 #------------------ENERGY CALCULATION AND OUTPUT------------------
 dump            atom_pe all custom 1 gb_energy_anneal.lammpstrj id element type x y z c_energy c_v[1] c_v[2]
-dump_modify     atom_pe sort id element Li La Zr O
+dump_modify     atom_pe sort id element {self.lammps_element_names()}
 write_data      optimized_gb.data
 run             0  # 运行0步触发输出
 """
@@ -857,13 +881,10 @@ atom_style      atomic
 dimension       3
 boundary        f f f
 read_data       {datafile}
-mass 1 6.941
-mass 2 138.9055
-mass 3 91.224
-mass 4 15.9994
+{self.lammps_mass_commands()}
 #------------------FORCE FIELDS------------------
-pair_style     deepmd {self.check_point_file}
-pair_coeff     * *
+{self.lammps_pair_style_command()}
+{self.lammps_pair_coeff_command()}
 neighbor        6.0 bin
 neigh_modify   every 5 delay 0 check no
 #------------------FIX OUTER ATOMS------------------
@@ -909,7 +930,7 @@ minimize 0.0 0.01 1000000 10000000
 unfix freeze
 #------------------ENERGY CALCULATION AND OUTPUT------------------
 dump            atom_pe all custom 1 {trajfile} id element type x y z c_energy c_v[1] c_v[2]
-dump_modify     atom_pe sort id element Li La Zr O
+dump_modify     atom_pe sort id element {self.lammps_element_names()}
 write_data      {optdata}
 run             0  # 运行0步触发输出
 """
@@ -923,12 +944,9 @@ atom_style      atomic
 dimension       3
 boundary        f f f
 read_data       gb_sorted.data
-mass 1 6.941       # Li
-mass 2 138.9055    # La
-mass 3 91.224      # Zr
-mass 4 15.9994     # O
-pair_style     deepmd {self.check_point_file}
-pair_coeff     * *
+{self.lammps_mass_commands()}
+{self.lammps_pair_style_command()}
+{self.lammps_pair_coeff_command()}
 timestep       {self.msd_timestep_ps}           # ps (metal units)
 neighbor       6.0 bin
 neigh_modify   every 5 delay 0 check yes
@@ -949,13 +967,13 @@ group   core   region core_outer          # 可动的“核心原子”
 group   core_inner   region core_inner
 group   fixed  subtract all core           # 外层壳：固定不动
 group   slab  region slab
-group   li       type 1
-group   li_core intersect li core_inner slab
-group   li_c   intersect  li core
+group   mobile       type {self.species_type_map()[self.resolved_mobile_species()]}
+group   mobile_core intersect mobile core_inner slab
+group   mobile_all   intersect mobile core
 # 把固定层速度清零 + 力清零
 velocity fixed set 0.0 0.0 0.0
 fix freeze fixed setforce 0.0 0.0 0.0
-# Li 与 Li 核心
+# Mobile species in the dynamic core
 # -------- 热浴参数 & 当前温度 --------
 variable Tdamp equal 100.0*dt              # ~100 步的温度驰豫时间
 variable T equal {T}
@@ -971,17 +989,17 @@ unfix f_nvt_eq
 reset_timestep 0
 dump d_traj all custom {self.msd_dump_interval} traj_T${{T}}.lammpstrj id element type x y z
 # 每 {self.msd_dump_interval} 步输出一次所有原子的 id, type, x, y, z
-dump_modify d_traj sort id element Li La Zr O
-# 只对核心 Li 计算 MSD，去掉质心漂移
-compute msd_li li_core msd com yes    # c_msd_li[1..4]
-compute msd_core  li_c msd com yes
+dump_modify d_traj sort id element {self.lammps_element_names()}
+# Compute MSD for the configured mobile species in the analysis region
+compute msd_mobile mobile_core msd com yes    # c_msd_mobile[1..4]
+compute msd_core mobile_all msd com yes
 # 每 100 步输出一次瞬时 MSD（不再做时间窗口平均）
-fix f_msd all ave/time 1 1 1 c_msd_li[1] c_msd_li[2] c_msd_li[3] c_msd_li[4] c_msd_core[1] c_msd_core[2] c_msd_core[3] c_msd_core[4] file msd_T${{T}}.dat
+fix f_msd all ave/time 1 1 1 c_msd_mobile[1] c_msd_mobile[2] c_msd_mobile[3] c_msd_mobile[4] c_msd_core[1] c_msd_core[2] c_msd_core[3] c_msd_core[4] file msd_T${{T}}.dat
 # 输出文件每行： time  MSDx  MSDy  MSDz  MSD_total
 # 生产模拟：默认 50000 * 0.001 ps = 50 ps，与论文方法一致
 fix f_nvt_prod core nvt temp ${{T}} ${{T}} ${{Tdamp}}
 thermo       1000
-thermo_style custom step temp c_msd_li[4]
+thermo_style custom step temp c_msd_mobile[4]
 run {self.msd_production_steps}
 unfix f_nvt_prod
 # 关掉 MSD 相关
@@ -990,7 +1008,7 @@ unfix f_msd
 #unfix f_rdf_li_o
 #unfix f_rdf_li_la
 #unfix f_rdf_li_zr
-uncompute msd_li
+uncompute msd_mobile
 uncompute msd_core
 #uncompute rdf_li_li
 #uncompute rdf_li_o
@@ -1004,7 +1022,7 @@ uncompute msd_core
         unit,x2, y2, z2, gap = params
         x1,y1,z1=unit*self.norm_unit
         #generate gb
-        sgg = SphereGBGenerator_bo(self.crystal_structure, self.sphere_R, self.vaccum_thickness)
+        sgg = SphereGBGenerator_bo(self.crystal_structure, self.sphere_R, self.vaccum_thickness, self.origin_anchor_species)
         gb = sgg.get_sphere_GB(rot(self.rot_axis, self.rot_angle),
                                     self.normal,
                                     [x1,y1,z1],
@@ -1013,18 +1031,19 @@ uncompute msd_core
         ##write lammps structure file
         lattice = np.array(gb.lattice.matrix)      # 和你函数里的 lattice 对应
         atoms = np.array(gb.frac_coords)           # 和你函数里的 atoms 对应
-        elements = np.array([str(sp) for sp in gb.species])  # 和你函数里的 elements 对应
+        elements = np.array([species_symbol(sp) for sp in gb.species])  # 和你函数里的 elements 对应
         write_LAMMPS(
             lattice=lattice,
             atoms=atoms,
             elements=elements,
             filename="gb.data",
-            orthogonal=False
+            orthogonal=False,
+            type_map=self.species_type_map(),
         )
         ##gb_indices
         all_indices = np.array(gb.site_properties['site_labels'])
         indices =[]
-        for i in range(192):
+        for i in range(len(self.crystal_structure)):
             indices.append(np.where(all_indices == i)[0])
 
         #lammps input file
@@ -1042,7 +1061,7 @@ uncompute msd_core
         center = np.array([a/2, b/2, c/2])           # 盒子中心
         dists = np.linalg.norm(coords - center, axis=1)
         errors_by_r, sectional_errors_by_r,total_sectional_errors = \
-    get_sectional_error_by_r(indices, dists, energies1, np.arange(3, self.gb_r), energies)
+    get_sectional_error_by_r(indices, dists, energies1, self.energy_radii(), energies)
         shutil.move('gb.data', f'gb_{self.count}.data')
         self.count += 1
         return total_sectional_errors[-1]
@@ -1052,21 +1071,33 @@ uncompute msd_core
         BO_job.update_metadata({'key':f'{self.metadata}_bys'})
         anneal_job = self.anneal(BO_job.output['best_x7'])
         anneal_job.update_metadata({'key':f'{self.metadata}_anneal'})
-        MSD_job = self.MSD(anneal_job.output['pwd'])
-        MSD_job.update_metadata({'key':f'{self.metadata}_MSD'})
-
-        return Flow([BO_job, anneal_job, MSD_job])
+        jobs = [BO_job, anneal_job]
+        if self.run_transport:
+            MSD_job = self.MSD(anneal_job.output['pwd'])
+            MSD_job.update_metadata({'key':f'{self.metadata}_MSD'})
+            jobs.append(MSD_job)
+        return Flow(jobs)
 
     @job
     def BO(self):
         self.count = 0
         def trial_with_progress(func, n_calls, *args, **kwargs):
-            with tqdm(total = n_calls, desc = "BO optimizing") as rgst_pbar:
-                def wrapped_func(*args, **kwargs):
-                    result = func(*args, **kwargs)
-                    rgst_pbar.update(1)
+            with tqdm(total=n_calls, desc="BO optimizing") as progress:
+                def wrapped_func(*call_args, **call_kwargs):
+                    result = func(*call_args, **call_kwargs)
+                    progress.update(1)
                     return result
-            return gp_minimize(wrapped_func, search_space, n_calls = n_calls, n_random_starts = int(0.1 * n_calls), *args, **kwargs)
+                return gp_minimize(
+                    wrapped_func,
+                    search_space,
+                    n_calls=n_calls,
+                    n_random_starts=max(1, int(0.1 * n_calls)),
+                    base_estimator=self.base_estimator,
+                    acq_func=self.acq_func,
+                    acq_optimizer=self.acq_optimizer,
+                    *args,
+                    **kwargs,
+                )
         #norm = np.linalg.norm(self.normal)
         self.norm_unit = self.normal / np.linalg.norm(self.normal)
         search_space = [Real(0, 0.5*self.crystal_structure.lattice.a, name = 'unit'),
@@ -1093,7 +1124,7 @@ uncompute msd_core
 
     @job
     def anneal(self, cs):
-        sgg = SphereGBGenerator(self.crystal_structure, self.sphere_R, self.vaccum_thickness)
+        sgg = SphereGBGenerator(self.crystal_structure, self.sphere_R, self.vaccum_thickness, self.origin_anchor_species, self.species_type_map())
         gb = sgg.get_sphere_GB(rot(self.rot_axis, self.rot_angle),
                                     self.normal,
                                     [cs[0],cs[1],cs[2]],
@@ -1101,19 +1132,20 @@ uncompute msd_core
                                     cs[6])
         lattice = np.array(gb.lattice.matrix)      # 和你函数里的 lattice 对应
         atoms = np.array(gb.frac_coords)           # 和你函数里的 atoms 对应
-        elements = np.array([str(sp) for sp in gb.species])  # 和你函数里的 elements 对应
+        elements = np.array([species_symbol(sp) for sp in gb.species])  # 和你函数里的 elements 对应
         write_LAMMPS(
             lattice=lattice,
             atoms=atoms,
             elements=elements,
             filename="gb_final.data",
-            orthogonal=False
+            orthogonal=False,
+            type_map=self.species_type_map(),
         )
         np.savetxt('gb_site_indices', gb.site_properties['site_labels'], fmt = '%i')
         ##gb_indices
         #lammps input file
         with open('lammps_anneal.in','w') as f:
-            f.write(self.lammps_input_anneal(equilibriate_T=1200,seed=12345,equilibriate_steps=1000, quench_steps=20000))
+            f.write(self.lammps_input_anneal(equilibriate_T=self.anneal_temperature_K, seed=12345, equilibriate_steps=self.anneal_equilibration_steps, quench_steps=self.anneal_quench_steps))
         run_lammps(self.lammps_executable, "lammps_anneal.in", "log_anneal.lammps")
 
         for h_id in [1,2]:
@@ -1130,7 +1162,7 @@ uncompute msd_core
         sort_atoms_by_id("optimized_h1.data", "h1_sorted.data")
         sort_atoms_by_id("optimized_h2.data", "h2_sorted.data")
         indices = []
-        for i in range(192):
+        for i in range(len(self.crystal_structure)):
             indice = []
             with open("gb_site_indices", "r", encoding="utf-8") as f:
                 for line_no, line in enumerate(f, start=0):  # 行号从 1 开始
@@ -1142,7 +1174,7 @@ uncompute msd_core
                         indice.append(line_no)
             indices.append(indice)
         indices1 = []
-        for i in range(192):
+        for i in range(len(self.crystal_structure)):
             indice1 = []
             with open("h1_site_indices", "r", encoding="utf-8") as f:
                 for line_no, line in enumerate(f, start=0):  # 行号从 1 开始
@@ -1154,7 +1186,7 @@ uncompute msd_core
                         indice1.append(line_no)
             indices1.append(indice1)
         indices2 = []
-        for i in range(192):
+        for i in range(len(self.crystal_structure)):
             indice2 = []
             with open("h2_site_indices", "r", encoding="utf-8") as f:
                 for line_no, line in enumerate(f, start=0):  # 行号从 1 开始
@@ -1182,15 +1214,24 @@ uncompute msd_core
         atom_ids0, energies0= extract_last_column_energy(self.bulk_energy_traj_file)
         atom_ids, volume0 = extract_last_column_volume(self.bulk_energy_traj_file)
         atom_ids1, volume = extract_last_column_volume(r'gb_energy_anneal.lammpstrj')
-        errors_by_r, sectional_errors_by_r,total_sectional_errors = get_sectional_error_by_r_energy(indices, dists, energies, np.arange(3, 45), energies0)
-        errors_by_r1, sectional_errors_by_r1,total_sectional_errors1 = get_sectional_error_by_r_energy(indices1, dists1, energies1, np.arange(3, 45), energies0)
-        errors_by_r2, sectional_errors_by_r2,total_sectional_errors2 = get_sectional_error_by_r_energy(indices2, dists2, energies2, np.arange(3, 45), energies0)
+        errors_by_r, sectional_errors_by_r,total_sectional_errors = get_sectional_error_by_r_energy(indices, dists, energies, self.energy_radii(), energies0)
+        errors_by_r1, sectional_errors_by_r1,total_sectional_errors1 = get_sectional_error_by_r_energy(indices1, dists1, energies1, self.energy_radii(), energies0)
+        errors_by_r2, sectional_errors_by_r2,total_sectional_errors2 = get_sectional_error_by_r_energy(indices2, dists2, energies2, self.energy_radii(), energies0)
         total_sectional_errors_all=np.array(total_sectional_errors1)+np.array(total_sectional_errors2)-np.array(total_sectional_errors)
-        errors_by_r_volume, sectional_errors_by_r_vomume,total_sectional_errors_volume = get_sectional_error_by_r_volume(indices, dists, volume, np.arange(3, 45), volume0)
+        errors_by_r_volume, sectional_errors_by_r_vomume,total_sectional_errors_volume = get_sectional_error_by_r_volume(indices, dists, volume, self.energy_radii(), volume0)
+        selected_index = len(self.energy_radii()) - 1
         return {
-             "gb_energy": total_sectional_errors,          # 你要的 7 参数轨迹
-             "wb": total_sectional_errors_all,
-             "excess": total_sectional_errors_volume,
+             "radii_A": self.energy_radii().tolist(),
+             "gb_energy_profile": np.asarray(total_sectional_errors).tolist(),
+             "work_of_separation_profile": np.asarray(total_sectional_errors_all).tolist(),
+             "excess_volume_profile": np.asarray(total_sectional_errors_volume).tolist(),
+             "selected_radius_A": float(self.energy_radii()[selected_index]),
+             "gb_energy": float(total_sectional_errors[selected_index]),
+             "work_of_separation": float(total_sectional_errors_all[selected_index]),
+             "excess_volume": float(total_sectional_errors_volume[selected_index]),
+             # Legacy aliases for downstream notebooks.
+             "wb": np.asarray(total_sectional_errors_all).tolist(),
+             "excess": np.asarray(total_sectional_errors_volume).tolist(),
              "pwd": os.getcwd() }
     @job
     def MSD(self,dir_):
@@ -1209,25 +1250,25 @@ uncompute msd_core
                 f"log_{T}.lammps",
             )
 
-        x = get_group_atoms(f"log_{self.msd_temperatures_K[0]}.lammps", "li_core")
+        x = get_group_atoms(f"log_{self.msd_temperatures_K[0]}.lammps", "mobile_core")
 
         MSD_FILES = [
             {"filename": f"msd_T{T}.dat", "T_K": T}
             for T in self.msd_temperatures_K
         ]
-        # 与论文方法一致：Li 数密度取半径 35 A 球体和厚度 30 A
-        # 中心薄层的交集体积。公式由几何积分解析得到。
+        # Number density uses the intersection of the configured sphere and centered slab.
         analysis_volume_A3 = spherical_slab_intersection_volume(
             self.msd_analysis_radius_A,
             self.msd_slab_half_thickness_A,
         )
         results, extra = run_msd_analysis(
             MSD_FILES,
-            n_li=x,
+            n_mobile=x,
             volume_A3=analysis_volume_A3,
             time_factor_ps=self.msd_timestep_ps,
             fit_t_min_ps=self.msd_fit_min_ps,
             fit_t_max_ps=self.msd_fit_max_ps,
+            charge_number=self.charge_number,
         )
         T_25C = 298.15
         sigma_25_S_m = None
@@ -1235,7 +1276,7 @@ uncompute msd_core
         b = None
         if extra["arrhenius_slope"] is not None:
             sigma_25_S_m = sigma_from_arrhenius(
-                T_25C, extra["n_m3"], extra["arrhenius_slope"], extra["arrhenius_intercept"]
+                T_25C, extra["n_m3"], extra["arrhenius_slope"], extra["arrhenius_intercept"], self.charge_number
             )
             sigma_25_S_cm = sigma_25_S_m * 0.01
             #print(f"预测 25°C (T={T_25C:.2f} K) 电导率：")
@@ -1343,25 +1384,25 @@ def D_raw_to_cm2s(D_raw_A2_per_ps: float) -> float:
     => 1 Å^2/ps = 1e-4 cm^2/s
     """
     return D_raw_A2_per_ps * 1e-4
-def compute_number_density(n_li: int, volume_A3: float) -> float:
+def compute_number_density(n_mobile: int, volume_A3: float) -> float:
     """
     计算载流子数密度 n (1/m^3)
     内部仍然用 SI 单位；输出时可以同时给出 cm^-3 方便你看
     """
-    if n_li <= 0:
-        raise ValueError("n_li must be positive")
+    if n_mobile <= 0:
+        raise ValueError("n_mobile must be positive")
     if volume_A3 <= 0:
         raise ValueError("volume_A3 must be positive")
     V_cell_m3 = volume_A3 * 1e-30
-    n = n_li / V_cell_m3  # 1/m^3
+    n = n_mobile / V_cell_m3  # 1/m^3
     return n
-def nernst_einstein_sigma(D_SI: float, n: float, T_K: float) -> float:
+def nernst_einstein_sigma(D_SI: float, n: float, T_K: float, charge_number: float = 1.0) -> float:
     """
     Nernst-Einstein 关系：
     σ = n q^2 D / (k_B T)
     返回单位：S/m
     """
-    return n * (E_CHARGE_C ** 2) * D_SI / (K_B_J_PER_K * T_K)
+    return n * ((abs(charge_number) * E_CHARGE_C) ** 2) * D_SI / (K_B_J_PER_K * T_K)
 def fit_Ea_from_D(results: List[MSDResult]) -> Tuple[float, float]:
     """
     用 Arrhenius 关系从 D(T) 拟合迁移能垒 Ea：
@@ -1385,17 +1426,17 @@ def D_arrhenius_SI(T_K: float, slope: float, intercept: float) -> float:
     """
     return float(np.exp(intercept + slope / T_K))
 
-def sigma_from_arrhenius(T_K: float, n: float, slope: float, intercept: float) -> float:
+def sigma_from_arrhenius(T_K: float, n: float, slope: float, intercept: float, charge_number: float = 1.0) -> float:
     """
     用 Arrhenius 的 D(T) + Nernst-Einstein 得到 σ(T)（单位：S/m）
     """
     D_SI = D_arrhenius_SI(T_K, slope, intercept)
-    return nernst_einstein_sigma(D_SI, n, T_K)
+    return nernst_einstein_sigma(D_SI, n, T_K, charge_number=charge_number)
 # ================== 主流程 ==================
 def run_msd_analysis(
     MSD_FILES,
     *,
-    n_li: int,
+    n_mobile: int,
     volume_A3: float,
     time_factor_ps: float,
     fit_t_min_ps: float,
@@ -1403,13 +1444,14 @@ def run_msd_analysis(
     dimension: int = 3,
     time_col: int = 0,
     msd_col: int = 4,
+    charge_number: float = 1.0,
 ) -> Tuple[List[MSDResult], Dict[str, Any]]:
     """
     返回：
     - results: 每个温度一个 MSDResult
     - extra: 额外信息（如 n、Ea 拟合参数等）
     """
-    n = compute_number_density(n_li, volume_A3)
+    n = compute_number_density(n_mobile, volume_A3)
     n_cm3 = n / 1e6
     results = []
     for item in MSD_FILES:
@@ -1429,12 +1471,12 @@ def run_msd_analysis(
             dim=dimension,
         )
 
-        if D_raw <= 0:
+        if not np.isfinite(D_raw) or D_raw <= 0:
             raise ValueError(f"Non-positive diffusion coefficient fitted from {filename}: {D_raw}")
 
         D_SI = D_raw_to_SI(D_raw)
         D_cm2_s = D_raw_to_cm2s(D_raw)
-        sigma_S_m = nernst_einstein_sigma(D_SI, n, T_K)
+        sigma_S_m = nernst_einstein_sigma(D_SI, n, T_K, charge_number=charge_number)
         sigma_S_cm = sigma_S_m * 0.01
         results.append(MSDResult(
             T_K = T_K,
@@ -1448,8 +1490,9 @@ def run_msd_analysis(
     extra: Dict[str, Any] = {
         "n_m3": n,
         "n_cm3": n_cm3,
-        "n_li": n_li,
+        "n_mobile": n_mobile,
         "analysis_volume_A3": volume_A3,
+        "charge_number": charge_number,
         "fit_t_min_ps": fit_t_min_ps,
         "fit_t_max_ps": fit_t_max_ps,
         "Ea_J": None,
@@ -1475,3 +1518,7 @@ def MSDResult_to_dict(msd_result):
            'D_raw':msd_result.D_raw,
            'sigma_S_m':msd_result.sigma_S_m,
            'sigma_S_cm':msd_result.sigma_S_cm}
+
+
+# Backward-compatible name used by the original LLZO release.
+SpheregbBOMaker = SphericalGBWorkflowMaker
