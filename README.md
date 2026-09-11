@@ -69,21 +69,13 @@ The DeePMD checkpoint is not redistributed in this repository. Set `potential.ch
 
 ## Configure a run
 
-Copy the public template to a local configuration:
+Copy the example configuration:
 
 ```bash
 cp configs/workflow.example.yaml configs/workflow.local.yaml
 ```
 
-Edit the checkpoint path and Jobflow-remote settings. `workflow.local.yaml` is excluded by `.gitignore` because it may contain cluster-specific paths.
-
-The example configuration also records the MD protocol used in the manuscript: 4 ps equilibration followed by 50 ps production at 973.15, 1073.15, 1173.15, and 1273.15 K. The conductivity analysis uses Li ions in the intersection of a radius-35 Å sphere and a centered 30 Å-thick slab. Its geometric volume is evaluated analytically as
-
-```text
-V = 2π(R²h − h³/3),  R = 35 Å, h = 15 Å.
-```
-
-The LAMMPS executable defaults to `lmp` and can be changed through `simulation.lammps_executable` (for example, to `lmp_mpi`). A non-zero LAMMPS exit code stops the workflow immediately and reports the final output lines.
+Set the DeePMD checkpoint and Jobflow-remote options in `workflow.local.yaml`. This local file is ignored by Git because it may contain cluster-specific paths. The LAMMPS executable can be changed with `simulation.lammps_executable`.
 
 Validate without submitting:
 
@@ -93,34 +85,23 @@ python scripts/submit_gb_workflow.py \
   --start-row 0 --stop-row 1 --dry-run
 ```
 
-Submit rows 1250 through 1264 (zero-based indexing; `stop-row` is exclusive):
+Remove `--dry-run` to submit the selected rows. Row indices are zero-based and `--stop-row` is exclusive.
 
-```bash
-python scripts/submit_gb_workflow.py \
-  --config configs/workflow.local.yaml \
-  --start-row 1250 --stop-row 1265
+The example configuration contains the manuscript MD settings: 4 ps equilibration and 50 ps production at 973.15, 1073.15, 1173.15, and 1273.15 K. Conductivity is evaluated for Li ions within the intersection of a radius-35 Å sphere and a centered 30 Å slab, with volume
+
+```text
+V = 2π(R²h − h³/3),  R = 35 Å, h = 15 Å.
 ```
-
-## Reproducibility and provenance
-
-The public module contains two non-scientific corrections relative to the preserved source snapshot:
-
-1. A helper now refers to its `structure` argument rather than an undefined global variable.
-2. A commented user-specific output path was replaced with a portable example path.
-
-A pre-publication source snapshot is retained in `legacy/gbmaker2_original.py`; only a commented user-specific path was sanitized. No scientific constants or production calculation settings were changed during repository packaging.
-
-The effective volume used for the Nernst-Einstein conversion is the sphere–slab intersection defined above, matching the manuscript method. Before tagging the archival release, confirm that the released source is the exact revision used for the reported results.
 
 ## Data availability
 
-The orientation table in this repository contains 1,291 sampled GB candidates. The companion Zenodo draft contains `outputs.xlsx`, a table of 1,199 unique GBs for which all 18 released geometry, energetic, and transport fields are present. The remaining 92 sampled candidates do not have a complete row in the released property table. The workbook contains no structure archives; column definitions and units are documented in `docs/DATA_DICTIONARY.md`.
+The orientation table contains 1,291 sampled GB candidates. The companion Zenodo dataset contains `outputs.xlsx` with 1,199 completed geometry, energetic, and transport records. The other 92 calculations failed during structural relaxation or molecular dynamics and are not included. Column definitions and units are provided in [`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md).
 
-The article's final Data Availability statement should cite the published Zenodo DOI. Additional derived data used for figures or statistical claims should be included in that record or deposited as a clearly linked companion record.
+The reserved dataset DOI is `10.5281/zenodo.22687083`; it will become active when the Zenodo record is published.
 
 ## Citation
 
-Citation metadata are provided in `CITATION.cff`. After GitHub-Zenodo archiving, add the software DOI to both `CITATION.cff` and this README.
+Citation metadata are provided in [`CITATION.cff`](CITATION.cff).
 
 ## License and attribution
 
