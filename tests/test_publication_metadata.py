@@ -34,8 +34,10 @@ def test_citation_points_to_the_repository_without_placeholders():
 
 def test_dataset_counts_are_explicitly_documented():
     readme = (ROOT / "README.md").read_text()
-    for count in ("1,291", "1,230", "1,199"):
+    for count in ("1,291", "1,199", "92"):
         assert count in readme
+    assert "outputs.xlsx" in readme
+    assert "1,230" not in readme
 
 
 def test_manuscript_sphere_slab_volume():

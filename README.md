@@ -114,7 +114,7 @@ The effective volume used for the Nernst-Einstein conversion is the sphere–sla
 
 ## Data availability
 
-The orientation table in this repository contains 1,291 sampled GB candidates. The planned Zenodo data record contains 1,230 initial structures, 1,230 optimized structures, and 1,199 filtered spreadsheet records. These numbers describe different processing stages and must not be interpreted as interchangeable sample counts. The data record should document the filtering criteria and link back to the archived software release.
+The orientation table in this repository contains 1,291 sampled GB candidates. The companion Zenodo draft contains `outputs.xlsx`, a table of 1,199 unique GBs for which all 18 released geometry, energetic, and transport fields are present. The remaining 92 sampled candidates do not have a complete row in the released property table. The workbook contains no structure archives; column definitions and units are documented in `docs/DATA_DICTIONARY.md`.
 
 The article's final Data Availability statement should cite the published Zenodo DOI. Additional derived data used for figures or statistical claims should be included in that record or deposited as a clearly linked companion record.
 

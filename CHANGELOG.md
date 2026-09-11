@@ -7,6 +7,7 @@
 - Documented and tested the sphere–slab volume used for the Nernst-Einstein conversion.
 - Corrected Zenodo license metadata and aligned release and dataset checklists with the repository.
 - Added lightweight continuous-integration checks for source syntax, inputs, and publication metadata.
+- Updated the data-availability documentation to match the single-file Zenodo draft (`outputs.xlsx`).
 
 ## 0.1.0 - 2026-09-10
 
