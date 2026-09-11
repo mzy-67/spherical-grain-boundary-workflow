@@ -15,6 +15,20 @@ optimization:
   trials: 200
   random_seed: 42
 
+# These values reproduce the MD protocol described in the manuscript.
+simulation:
+  lammps_executable: lmp
+  mobile_radius_A: 39.0
+  msd_analysis_radius_A: 35.0
+  msd_slab_half_thickness_A: 15.0
+  timestep_ps: 0.001
+  equilibration_steps: 4000
+  production_steps: 50000
+  trajectory_dump_interval: 500
+  fit_min_ps: 10.0
+  fit_max_ps: 50.0
+  temperatures_K: [973.15, 1073.15, 1173.15, 1273.15]
+
 submission:
   worker: llzo_worker
   project: std

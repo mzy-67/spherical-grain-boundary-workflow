@@ -11,7 +11,6 @@ from pymatgen.core.lattice import Lattice
 from interfacemaster.cellcalc import get_pri_vec_inplane, get_right_hand
 from interfacemaster.interface_generator import cross_plane
 from interfacemaster.cellcalc import rot
-import subprocess
 import os
 from dataclasses import dataclass
 from jobflow import Flow, Response, job, Maker
@@ -22,6 +21,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 import math
 import matplotlib.pyplot as plt
+from .runtime import run_lammps, spherical_slab_intersection_volume
 #按照最小的位移去移动
 def shift_slab_to_origin(slab):
     coords = np.array([i.coords for i in slab if i.label == 'Zr'])
@@ -650,6 +650,7 @@ def get_group_atoms(logfile, group):
         raise ValueError(f"没找到 group {group}")
     return int(m.group(1))
 
+
 #define optimizer
 from skopt import Optimizer, gp_minimize
 
@@ -684,6 +685,17 @@ class SpheregbBOMaker(Maker):
     rot_axis: List = None
     rot_angle: float = 0
     normal: List = None
+    lammps_executable: str = "lmp"
+    mobile_radius_A: float = 39.0
+    msd_analysis_radius_A: float = 35.0
+    msd_slab_half_thickness_A: float = 15.0
+    msd_timestep_ps: float = 0.001
+    msd_equilibration_steps: int = 4000
+    msd_production_steps: int = 50000
+    msd_dump_interval: int = 500
+    msd_fit_min_ps: float = 10.0
+    msd_fit_max_ps: float = 50.0
+    msd_temperatures_K: Tuple[float, ...] = (973.15, 1073.15, 1173.15, 1273.15)
     def lammps_input_static_energy(self):
         lammps_input = f"""
 # NANOPARTICLE MELTING
@@ -748,7 +760,7 @@ variable        zhigh equal (zlo+zhi)/2+4
 variable        zlow1 equal (zlo+zhi)/2-2.5
 variable        zhigh1 equal (zlo+zhi)/2+2.5
 # 使用region命令创建球形区域来选择原子
-region          sphere sphere ${{cx}} ${{cy}} ${{cz}} 39.0
+region          sphere sphere ${{cx}} ${{cy}} ${{cz}} {self.mobile_radius_A}
 region          slab block INF INF INF INF ${{zlow}} ${{zhigh}} units box
 region          slab_low block INF INF INF INF INF ${{zlow}} units box
 region          slab_up block INF INF INF INF ${{zhigh}} INF units box
@@ -864,7 +876,7 @@ variable        zhigh equal (zlo+zhi)/2+4
 variable        zlow1 equal (zlo+zhi)/2-2.5
 variable        zhigh1 equal (zlo+zhi)/2+2.5
 # 使用region命令创建球形区域来选择原子
-region          sphere sphere ${{cx}} ${{cy}} ${{cz}} 39.0
+region          sphere sphere ${{cx}} ${{cy}} ${{cz}} {self.mobile_radius_A}
 region          slab block INF INF INF INF ${{zlow}} ${{zhigh}} units box
 region          slab_low block INF INF INF INF INF ${{zlow}} units box
 region          slab_up block INF INF INF INF ${{zhigh}} INF units box
@@ -917,7 +929,7 @@ mass 3 91.224      # Zr
 mass 4 15.9994     # O
 pair_style     deepmd {self.check_point_file}
 pair_coeff     * *
-timestep       0.001           # 1 fs
+timestep       {self.msd_timestep_ps}           # ps (metal units)
 neighbor       6.0 bin
 neigh_modify   every 5 delay 0 check yes
 # -------- 定义核心/表面原子并固定表面 --------
@@ -925,11 +937,11 @@ neigh_modify   every 5 delay 0 check yes
 variable cx equal (xlo+xhi)/2.0
 variable cy equal (ylo+yhi)/2.0
 variable cz equal (zlo+zhi)/2.0
-variable dz equal 15
+variable dz equal {self.msd_slab_half_thickness_A}
 variable zlow  equal ${{cz}}-${{dz}}
 variable zhigh equal ${{cz}}+${{dz}}
-variable Rcore equal 39.0
-variable rcore equal 35.0
+variable Rcore equal {self.mobile_radius_A}
+variable rcore equal {self.msd_analysis_radius_A}
 region  slab block INF INF INF INF ${{zlow}} ${{zhigh}} units box
 region  core_outer  sphere ${{cx}} ${{cy}} ${{cz}} ${{Rcore}} units box
 region  core_inner  sphere ${{cx}} ${{cy}} ${{cz}} ${{rcore}} units box
@@ -953,12 +965,12 @@ velocity core create ${{T}} 12345 mom yes dist gaussian
 fix f_nvt_eq core nvt temp ${{T}} ${{T}} ${{Tdamp}}
 thermo       100
 thermo_style custom step temp pe
-run 4000                   # 4 ps 平衡
+run {self.msd_equilibration_steps}
 unfix f_nvt_eq
 # -------- 2. 重新计时，打开 MSD 统计 + 生产模拟 --------
 reset_timestep 0
-dump d_traj all custom 500 traj_T${{T}}.lammpstrj id element type x y z
-# 每 100 步输出一次所有原子的 id, type, x, y, z
+dump d_traj all custom {self.msd_dump_interval} traj_T${{T}}.lammpstrj id element type x y z
+# 每 {self.msd_dump_interval} 步输出一次所有原子的 id, type, x, y, z
 dump_modify d_traj sort id element Li La Zr O
 # 只对核心 Li 计算 MSD，去掉质心漂移
 compute msd_li li_core msd com yes    # c_msd_li[1..4]
@@ -966,11 +978,11 @@ compute msd_core  li_c msd com yes
 # 每 100 步输出一次瞬时 MSD（不再做时间窗口平均）
 fix f_msd all ave/time 1 1 1 c_msd_li[1] c_msd_li[2] c_msd_li[3] c_msd_li[4] c_msd_core[1] c_msd_core[2] c_msd_core[3] c_msd_core[4] file msd_T${{T}}.dat
 # 输出文件每行： time  MSDx  MSDy  MSDz  MSD_total
-# 在该温度下做 100 ps 生产模拟
+# 生产模拟：默认 50000 * 0.001 ps = 50 ps，与论文方法一致
 fix f_nvt_prod core nvt temp ${{T}} ${{T}} ${{Tdamp}}
 thermo       1000
 thermo_style custom step temp c_msd_li[4]
-run 50000                      # 50000 * 0.001 ps = 50 ps
+run {self.msd_production_steps}
 unfix f_nvt_prod
 # 关掉 MSD 相关
 unfix f_msd
@@ -1019,16 +1031,7 @@ uncompute msd_core
         with open('lammps.in','w') as f:
             f.write(self.lammps_input_static_energy())
 
-        #run lammps
-        cmd = "lmp -i lammps.in -log log.lammps"
-        proc = subprocess.Popen(
-            cmd.split(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # 合并到 stdout
-            text=True,               # 返回 str 而非 bytes
-            bufsize=1,               # 行缓冲，便于实时打印
-        )
-        proc.wait()
+        run_lammps(self.lammps_executable, "lammps.in", "log.lammps")
 
         #read gb energy
         atom_ids, energies = extract_last_column_energy(self.bulk_energy_traj_file)
@@ -1111,32 +1114,18 @@ uncompute msd_core
         #lammps input file
         with open('lammps_anneal.in','w') as f:
             f.write(self.lammps_input_anneal(equilibriate_T=1200,seed=12345,equilibriate_steps=1000, quench_steps=20000))
-        #run lammps
-        cmd = "lmp -i lammps_anneal.in -log log_anneal.lammps"
-        proc = subprocess.Popen(
-            cmd.split(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # 合并到 stdout
-            text=True,               # 返回 str 而非 bytes
-            bufsize=1,               # 行缓冲，便于实时打印
-        )
-        proc.wait()
+        run_lammps(self.lammps_executable, "lammps_anneal.in", "log_anneal.lammps")
 
         for h_id in [1,2]:
             with open(f'lammps_h{h_id}.in','w') as f:
                 f.write(self.lammps_input_surface_energy(datafile = f'hemisphere_{h_id}.data',
                                                         trajfile = f'h{h_id}_energy.lammpstrj',
                                                         optdata=f'optimized_h{h_id}.data'))
-            #run lammps
-            cmd = f"lmp -i lammps_h{h_id}.in -log log_h{h_id}.lammps"
-            proc = subprocess.Popen(
-                cmd.split(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # 合并到 stdout
-                text=True,               # 返回 str 而非 bytes
-                bufsize=1,               # 行缓冲，便于实时打印
+            run_lammps(
+                self.lammps_executable,
+                f"lammps_h{h_id}.in",
+                f"log_h{h_id}.lammps",
             )
-            proc.wait()
         sort_atoms_by_id("optimized_gb.data", "gb_sorted.data")
         sort_atoms_by_id("optimized_h1.data", "h1_sorted.data")
         sort_atoms_by_id("optimized_h2.data", "h2_sorted.data")
@@ -1211,49 +1200,39 @@ uncompute msd_core
         dst = "./gb_sorted.data"                  # 目标路径（当前目录）
         shutil.copy(src, dst)
         import numpy as np
-        for T in np.array([700, 800, 900, 1000]) + 273.15:
+        for T in self.msd_temperatures_K:
             with open(f'lammps_{T}.in','w') as f:
                 f.write(self.lammps_input_MSD(T))
-            #run lammps
-            cmd = f"lmp -i lammps_{T}.in -log log_{T}.lammps"
-            proc = subprocess.Popen(
-                cmd.split(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # 合并到 stdout
-                text=True,               # 返回 str 而非 bytes
-                bufsize=1,               # 行缓冲，便于实时打印
+            run_lammps(
+                self.lammps_executable,
+                f"lammps_{T}.in",
+                f"log_{T}.lammps",
             )
-            proc.wait()
 
-        x = get_group_atoms(f"log_{700+273.15}.lammps", "li_core")
+        x = get_group_atoms(f"log_{self.msd_temperatures_K[0]}.lammps", "li_core")
 
         MSD_FILES = [
-        {"filename": "msd_T973.15.dat",  "T_K": 973.15},
-        {"filename": "msd_T1073.15.dat",  "T_K": 1073.15},
-            {"filename": "msd_T1173.15.dat",   "T_K": 1173.15},
-            {"filename": "msd_T1273.15.dat",  "T_K": 1273.15}
+            {"filename": f"msd_T{T}.dat", "T_K": T}
+            for T in self.msd_temperatures_K
         ]
-        # 2. 文件格式相关：哪一列是时间，哪一列是 MSD，总时间单位换算
-        global TIME_COL, MSD_COL, TIME_FACTOR_PS, FIT_T_MIN_PS, FIT_T_MAX_PS, DIMENSION, N_LI_PER_CELL, CELL_VOLUME_A3, k_B, e_charge
-
-        TIME_COL = 0      # 时间步在第 1 列
-        MSD_COL  = 4      # 总 MSD 在第 5 列（从 0 开始计数）
-        TIME_FACTOR_PS = 0.001  # 你现在设的是 0.001 ps/step
-        # 3. 用哪一段时间进行线性拟合（ps）
-        FIT_T_MIN_PS = 10
-        FIT_T_MAX_PS = 50
-        # 4. 维度（3D → 3；2D → 2）
-        DIMENSION = 3
-        # !!! 这里强烈建议用真实模拟 box 的体积，而不是 pi*44^2 这种 !!!
-        N_LI_PER_CELL = x                #这个数非常大，检查一下是不是你整个球里 Li 的总数
-        CELL_VOLUME_A3 = np.pi*30*(35*35-(30*30)/12)    # 这里我先改成 pi*R^3，别忘了之后用真实体积替换
-        # ================== 物理常数 ==================
-        k_B = 1.380649e-23            # J/K
-        e_charge = 1.602176634e-19    # C
-        # ================== 辅助数据结构 ==================
-
-        results, extra = run_msd_analysis(MSD_FILES)
+        # 与论文方法一致：Li 数密度取半径 35 A 球体和厚度 30 A
+        # 中心薄层的交集体积。公式由几何积分解析得到。
+        analysis_volume_A3 = spherical_slab_intersection_volume(
+            self.msd_analysis_radius_A,
+            self.msd_slab_half_thickness_A,
+        )
+        results, extra = run_msd_analysis(
+            MSD_FILES,
+            n_li=x,
+            volume_A3=analysis_volume_A3,
+            time_factor_ps=self.msd_timestep_ps,
+            fit_t_min_ps=self.msd_fit_min_ps,
+            fit_t_max_ps=self.msd_fit_max_ps,
+        )
         T_25C = 298.15
+        sigma_25_S_m = None
+        a = None
+        b = None
         if extra["arrhenius_slope"] is not None:
             sigma_25_S_m = sigma_from_arrhenius(
                 T_25C, extra["n_m3"], extra["arrhenius_slope"], extra["arrhenius_intercept"]
@@ -1288,21 +1267,32 @@ class MSDResult:
     D_raw: float         # 原始单位：Å^2/ps
     sigma_S_m: float     # S/m
     sigma_S_cm: float    # S/cm
+
+
+K_B_J_PER_K = 1.380649e-23
+E_CHARGE_C = 1.602176634e-19
+
+
 # ================== 核心函数 ==================
-def load_msd_file(filename: str) -> Tuple[np.ndarray, np.ndarray]:
+def load_msd_file(
+    filename: str,
+    time_col: int = 0,
+    msd_col: int = 4,
+    time_factor_ps: float = 0.001,
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     从 MSD 文件里读取时间（ps）和 MSD（Å^2）
     假设：注释行以 '#' 开头
     """
     data = np.loadtxt(filename, comments='#')
     if len(data.shape) == 1:
-        time_raw = np.array([data[TIME_COL]])
-        msd_raw = np.array([data[MSD_COL]])
+        time_raw = np.array([data[time_col]])
+        msd_raw = np.array([data[msd_col]])
     else:
-        time_raw = data[:, TIME_COL]
-        msd_raw  = data[:, MSD_COL]
+        time_raw = data[:, time_col]
+        msd_raw = data[:, msd_col]
 
-    time_ps = time_raw * TIME_FACTOR_PS   # 转成 ps
+    time_ps = time_raw * time_factor_ps
     msd_A2  = msd_raw                     # 这里假设本来就是 Å^2
     return time_ps, msd_A2
 def fit_D_from_MSD(time_ps: np.ndarray, msd_A2: np.ndarray,
@@ -1326,6 +1316,11 @@ def fit_D_from_MSD(time_ps: np.ndarray, msd_A2: np.ndarray,
     t_fit = time_ps[idx_fit]
     msd_fit = msd_A2[idx_fit]
 
+    if len(t_fit) < 2:
+        raise ValueError(
+            f"MSD fit interval contains {len(t_fit)} point(s); at least 2 are required"
+        )
+
     # 简单线性拟合：MSD = m * t + b
     #print(t_fit, msd_fit)
     coeffs = np.polyfit(t_fit, msd_fit, 1)
@@ -1348,13 +1343,17 @@ def D_raw_to_cm2s(D_raw_A2_per_ps: float) -> float:
     => 1 Å^2/ps = 1e-4 cm^2/s
     """
     return D_raw_A2_per_ps * 1e-4
-def compute_number_density() -> float:
+def compute_number_density(n_li: int, volume_A3: float) -> float:
     """
     计算载流子数密度 n (1/m^3)
     内部仍然用 SI 单位；输出时可以同时给出 cm^-3 方便你看
     """
-    V_cell_m3 = CELL_VOLUME_A3 * 1e-30
-    n = N_LI_PER_CELL / V_cell_m3  # 1/m^3
+    if n_li <= 0:
+        raise ValueError("n_li must be positive")
+    if volume_A3 <= 0:
+        raise ValueError("volume_A3 must be positive")
+    V_cell_m3 = volume_A3 * 1e-30
+    n = n_li / V_cell_m3  # 1/m^3
     return n
 def nernst_einstein_sigma(D_SI: float, n: float, T_K: float) -> float:
     """
@@ -1362,7 +1361,7 @@ def nernst_einstein_sigma(D_SI: float, n: float, T_K: float) -> float:
     σ = n q^2 D / (k_B T)
     返回单位：S/m
     """
-    return n * (e_charge ** 2) * D_SI / (k_B * T_K)
+    return n * (E_CHARGE_C ** 2) * D_SI / (K_B_J_PER_K * T_K)
 def fit_Ea_from_D(results: List[MSDResult]) -> Tuple[float, float]:
     """
     用 Arrhenius 关系从 D(T) 拟合迁移能垒 Ea：
@@ -1376,8 +1375,8 @@ def fit_Ea_from_D(results: List[MSDResult]) -> Tuple[float, float]:
     x = 1.0 / T_list             # 1/K
     y = np.log(D_list)           # ln(D)
     slope, intercept = np.polyfit(x, y, 1)
-    Ea_J = -slope * k_B
-    Ea_eV = Ea_J / e_charge
+    Ea_J = -slope * K_B_J_PER_K
+    Ea_eV = Ea_J / E_CHARGE_C
     return Ea_J, Ea_eV, slope, intercept
 def D_arrhenius_SI(T_K: float, slope: float, intercept: float) -> float:
     """
@@ -1393,26 +1392,45 @@ def sigma_from_arrhenius(T_K: float, n: float, slope: float, intercept: float) -
     D_SI = D_arrhenius_SI(T_K, slope, intercept)
     return nernst_einstein_sigma(D_SI, n, T_K)
 # ================== 主流程 ==================
-def run_msd_analysis(MSD_FILES) -> Tuple[List[MSDResult], Dict[str, Any]]:
+def run_msd_analysis(
+    MSD_FILES,
+    *,
+    n_li: int,
+    volume_A3: float,
+    time_factor_ps: float,
+    fit_t_min_ps: float,
+    fit_t_max_ps: float,
+    dimension: int = 3,
+    time_col: int = 0,
+    msd_col: int = 4,
+) -> Tuple[List[MSDResult], Dict[str, Any]]:
     """
     返回：
     - results: 每个温度一个 MSDResult
     - extra: 额外信息（如 n、Ea 拟合参数等）
     """
-    n = compute_number_density()
+    n = compute_number_density(n_li, volume_A3)
     n_cm3 = n / 1e6
     results = []
     for item in MSD_FILES:
         filename = item["filename"]
         T_K = item["T_K"]
-        time_ps, msd_A2 = load_msd_file(filename)
+        time_ps, msd_A2 = load_msd_file(
+            filename,
+            time_col=time_col,
+            msd_col=msd_col,
+            time_factor_ps=time_factor_ps,
+        )
         #print(time_ps, msd_A2)
         D_raw = fit_D_from_MSD(
             time_ps, msd_A2,
-            t_min_ps=FIT_T_MIN_PS,
-            t_max_ps=FIT_T_MAX_PS,
-            dim=DIMENSION
+            t_min_ps=fit_t_min_ps,
+            t_max_ps=fit_t_max_ps,
+            dim=dimension,
         )
+
+        if D_raw <= 0:
+            raise ValueError(f"Non-positive diffusion coefficient fitted from {filename}: {D_raw}")
 
         D_SI = D_raw_to_SI(D_raw)
         D_cm2_s = D_raw_to_cm2s(D_raw)
@@ -1430,6 +1448,10 @@ def run_msd_analysis(MSD_FILES) -> Tuple[List[MSDResult], Dict[str, Any]]:
     extra: Dict[str, Any] = {
         "n_m3": n,
         "n_cm3": n_cm3,
+        "n_li": n_li,
+        "analysis_volume_A3": volume_A3,
+        "fit_t_min_ps": fit_t_min_ps,
+        "fit_t_max_ps": fit_t_max_ps,
         "Ea_J": None,
         "Ea_eV": None,
         "arrhenius_slope": None,

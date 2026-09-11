@@ -63,7 +63,46 @@ def main() -> None:
     llzo = Structure.from_file(structure_file)
     opt = cfg["optimization"]
     gb = cfg["grain_boundary"]
+    sim = {
+        "lammps_executable": "lmp",
+        "mobile_radius_A": 39.0,
+        "msd_analysis_radius_A": 35.0,
+        "msd_slab_half_thickness_A": 15.0,
+        "timestep_ps": 0.001,
+        "equilibration_steps": 4000,
+        "production_steps": 50000,
+        "trajectory_dump_interval": 500,
+        "fit_min_ps": 10.0,
+        "fit_max_ps": 50.0,
+        "temperatures_K": [973.15, 1073.15, 1173.15, 1273.15],
+    }
+    sim.update(cfg.get("simulation", {}))
     sub = cfg["submission"]
+
+    temperatures = tuple(float(value) for value in sim["temperatures_K"])
+    if len(temperatures) < 2:
+        raise ValueError("simulation.temperatures_K must contain at least two temperatures")
+    positive_values = {
+        key: float(sim[key])
+        for key in (
+            "mobile_radius_A",
+            "msd_analysis_radius_A",
+            "msd_slab_half_thickness_A",
+            "timestep_ps",
+            "equilibration_steps",
+            "production_steps",
+            "trajectory_dump_interval",
+        )
+    }
+    invalid = [key for key, value in positive_values.items() if value <= 0]
+    if invalid:
+        raise ValueError(f"Simulation values must be positive: {invalid}")
+    if float(sim["mobile_radius_A"]) < float(sim["msd_analysis_radius_A"]):
+        raise ValueError("simulation.mobile_radius_A must enclose msd_analysis_radius_A")
+    if not 0 <= float(sim["fit_min_ps"]) < float(sim["fit_max_ps"]):
+        raise ValueError("simulation fit interval must satisfy 0 <= fit_min_ps < fit_max_ps")
+    if float(sim["fit_max_ps"]) > float(sim["production_steps"]) * float(sim["timestep_ps"]):
+        raise ValueError("simulation.fit_max_ps exceeds the production trajectory length")
 
     qverbatim = "\n".join([
         f"#SBATCH --cpus-per-gpu={int(sub['cpus_per_gpu'])}",
@@ -99,6 +138,17 @@ def main() -> None:
             rot_angle=float(np.deg2rad(row.misorientation_angle_deg)),
             normal=[float(row.plane_h), float(row.plane_k), float(row.plane_l)],
             metadata=metadata,
+            lammps_executable=str(sim["lammps_executable"]),
+            mobile_radius_A=float(sim["mobile_radius_A"]),
+            msd_analysis_radius_A=float(sim["msd_analysis_radius_A"]),
+            msd_slab_half_thickness_A=float(sim["msd_slab_half_thickness_A"]),
+            msd_timestep_ps=float(sim["timestep_ps"]),
+            msd_equilibration_steps=int(sim["equilibration_steps"]),
+            msd_production_steps=int(sim["production_steps"]),
+            msd_dump_interval=int(sim["trajectory_dump_interval"]),
+            msd_fit_min_ps=float(sim["fit_min_ps"]),
+            msd_fit_max_ps=float(sim["fit_max_ps"]),
+            msd_temperatures_K=temperatures,
         )
         flow = maker.make()
         if args.dry_run:

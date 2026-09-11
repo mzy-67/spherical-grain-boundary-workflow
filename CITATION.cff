@@ -3,7 +3,6 @@ message: "If you use this software, please cite the associated article and archi
 title: "Scalable Spherical Grain-Boundary Workflow for LLZO"
 type: software
 version: 0.1.0
-date-released: 2026-09-10
 license: MIT
 authors:
   - family-names: Man

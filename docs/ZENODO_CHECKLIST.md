@@ -1,13 +1,18 @@
 # Zenodo dataset checklist
 
-Deposit the following as a separate Dataset record and link its DOI from the GitHub release:
+Deposit the data as a separate Zenodo Dataset record and link its DOI from the GitHub software release. The currently planned deposit contains:
 
-1. Initial and optimized structures for all 1,291 GBs.
-2. GB metadata and Bayesian-optimization traces.
-3. Temperature-resolved MSD, diffusion, conductivity, and activation-energy summaries.
-4. Per-ion structural descriptors, mobility labels, and softness predictions.
-5. Cavity nodes, geometric edges, MD-active edges, and network metrics.
-6. Source data for every main-text and supporting figure.
-7. `README_DATASET.md` and `SHA256SUMS.txt`.
+1. `no-opt-data1` archive: 1,230 initial structures.
+2. `opt-data1` archive: 1,230 optimized structures.
+3. `filtered6_1200.xlsx`: 1,199 filtered records.
+4. `README_DATASET.md`: definitions, units, directory layout, filtering criteria, and the relationship among the 1,291 sampled candidates, 1,230 structures, and 1,199 filtered records.
+5. `SHA256SUMS.txt`: checksums generated from the exact uploaded files.
+
+Before publication:
+
+1. Verify that every quantitative claim and figure in the article is reproducible from this record or from an explicitly linked companion record.
+2. Include the software repository URL and, after the GitHub release is archived, its software DOI as related identifiers.
+3. Check author names, affiliations, funding, keywords, access rights, and license in the Zenodo form.
+4. Download the completed draft once and verify archive integrity and checksums before clicking **Publish**.
 
 Do not upload credentials, cluster configuration, redundant scheduler logs, or third-party potential files without redistribution permission.

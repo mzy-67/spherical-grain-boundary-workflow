@@ -3,7 +3,9 @@
   "description": "Jobflow-based software for constructing, optimizing, annealing, and simulating spherical grain-boundary models of Li7La3Zr2O12.",
   "upload_type": "software",
   "access_right": "open",
-  "license": "mit-license",
+  "license": "mit",
+  "version": "0.1.0",
+  "language": "eng",
   "creators": [
     {"name": "Man, Ziyi"},
     {"name": "Xie, Yaoshu"},

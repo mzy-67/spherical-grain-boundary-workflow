@@ -51,7 +51,7 @@ Large trajectory data, optimized structures, per-ion descriptors, trained models
 - DeePMD-kit 3.0.2
 - LAMMPS 29 Aug 2024 Update 1
 
-The exact conda package record captured from the HPC environment can be added to a release as `environment-lock.yml`.
+`environment-lock.yml` records the exact Linux HPC environment used for provenance. It includes locally installed project packages and is not intended as a portable installer; use `environment.yml` for a clean installation.
 
 ## Installation
 
@@ -76,6 +76,14 @@ cp configs/workflow.example.yaml configs/workflow.local.yaml
 ```
 
 Edit the checkpoint path and Jobflow-remote settings. `workflow.local.yaml` is excluded by `.gitignore` because it may contain cluster-specific paths.
+
+The example configuration also records the MD protocol used in the manuscript: 4 ps equilibration followed by 50 ps production at 973.15, 1073.15, 1173.15, and 1273.15 K. The conductivity analysis uses Li ions in the intersection of a radius-35 Å sphere and a centered 30 Å-thick slab. Its geometric volume is evaluated analytically as
+
+```text
+V = 2π(R²h − h³/3),  R = 35 Å, h = 15 Å.
+```
+
+The LAMMPS executable defaults to `lmp` and can be changed through `simulation.lammps_executable` (for example, to `lmp_mpi`). A non-zero LAMMPS exit code stops the workflow immediately and reports the final output lines.
 
 Validate without submitting:
 
@@ -102,11 +110,13 @@ The public module contains two non-scientific corrections relative to the preser
 
 A pre-publication source snapshot is retained in `legacy/gbmaker2_original.py`; only a commented user-specific path was sanitized. No scientific constants or production calculation settings were changed during repository packaging.
 
-Before tagging the archival release, verify the effective volume used for the Nernst-Einstein conversion against the final manuscript method and confirm that the released source is the exact revision used for the reported results.
+The effective volume used for the Nernst-Einstein conversion is the sphere–slab intersection defined above, matching the manuscript method. Before tagging the archival release, confirm that the released source is the exact revision used for the reported results.
 
 ## Data availability
 
-The corresponding Zenodo dataset DOI will be added here after deposition. It should contain optimized structures, GB metadata, transport summaries, per-ion mobility/softness data, cavity-network data, and source data for all figures.
+The orientation table in this repository contains 1,291 sampled GB candidates. The planned Zenodo data record contains 1,230 initial structures, 1,230 optimized structures, and 1,199 filtered spreadsheet records. These numbers describe different processing stages and must not be interpreted as interchangeable sample counts. The data record should document the filtering criteria and link back to the archived software release.
+
+The article's final Data Availability statement should cite the published Zenodo DOI. Additional derived data used for figures or statistical claims should be included in that record or deposited as a clearly linked companion record.
 
 ## Citation
 
