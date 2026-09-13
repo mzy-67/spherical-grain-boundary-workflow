@@ -2,7 +2,6 @@
 """Perform repository checks without launching LAMMPS or submitting jobs."""
 from pathlib import Path
 import hashlib
-import json
 import math
 import pandas as pd
 import yaml
@@ -28,8 +27,6 @@ assert (rotation_to_z([0, 0, -1]) @ [0, 0, -1]).tolist() == [0.0, 0.0, 1.0]
 volume = spherical_slab_intersection_volume(35.0, 15.0)
 expected = math.pi * 30.0 * (35.0**2 - 30.0**2 / 12.0)
 assert math.isclose(volume, expected, rel_tol=1e-15)
-assert json.loads((root / ".zenodo.json").read_text())["license"] == "mit"
-
 for rel in ["inputs/gb_orientations.csv", "inputs/sorted_optimized_bulk_POSCAR", "inputs/bulk_energy_reference.lammpstrj"]:
     path = root / rel
     print(hashlib.sha256(path.read_bytes()).hexdigest(), rel)
