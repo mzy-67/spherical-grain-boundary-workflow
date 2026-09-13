@@ -40,6 +40,7 @@ Optional carrier MSD, diffusion, conductivity, and Arrhenius analysis
 - `examples/llzo/`: settings that reproduce the original LLZO workflow.
 - `examples/single_gb/`: one-orientation LLZO smoke test.
 - `inputs/`: LLZO example/reference inputs retained for reproducibility.
+- `results/`: released tabular results and their data documentation.
 - `legacy/`: original pre-publication source snapshot; not used by the package.
 
 ## Installation
@@ -102,9 +103,21 @@ Remove `--dry-run` to submit. Row indices are zero-based and `--stop-row` is exc
 
 ## LLZO reproduction example
 
-The original Li7La3Zr2O12 inputs and its 1,291-orientation table remain available as an example. Copy `examples/llzo/config.yaml`, set the authorized DeePMD checkpoint and your scheduler settings, then run the same submit command. The companion research dataset contains `outputs.xlsx` with 1,199 completed records; 92 runs failed during relaxation or MD and are not represented in that table.
+The original Li7La3Zr2O12 inputs and its 1,291-orientation table remain available as an example. Copy `examples/llzo/config.yaml`, set the authorized DeePMD checkpoint and your scheduler settings, then run the same submit command. The released [`results/outputs.xlsx`](results/outputs.xlsx) workbook contains 1,199 completed records; 92 sampled IDs without a complete property row are not represented in that table.
 
-The DeePMD checkpoint and large production outputs are not redistributed here. Cite the original potential publication and follow its license.
+## Results dataset
+
+The compact result table is version-controlled in this repository. The two large structure archives are attached to the [`dataset-v1.0` GitHub release](https://github.com/mzy-67/spherical-grain-boundary-workflow/releases/tag/dataset-v1.0), rather than stored in Git history:
+
+| File | Contents | Records | SHA-256 |
+| --- | --- | ---: | --- |
+| [`results/outputs.xlsx`](results/outputs.xlsx) | GB descriptors and calculated properties | 1,199 | `b0079b5fabc0450e447bae502dc08ec5fab257c9683f18cd4f0ac3a33a9806bb` |
+| [`opt-data1.zip`](https://github.com/mzy-67/spherical-grain-boundary-workflow/releases/download/dataset-v1.0/opt-data1.zip) | Optimized LAMMPS structure files | 1,230 | `a759fef19caa2f69bfd861cbc34d4b82ce02ecaace5b701cc9bf844568fcbfb2` |
+| [`no-opt-data1.zip`](https://github.com/mzy-67/spherical-grain-boundary-workflow/releases/download/dataset-v1.0/no-opt-data1.zip) | Corresponding unoptimized LAMMPS structure files | 1,230 | `808bb010027f4adf326041cd3857db5351a1e27b002c6efe6b571714f7bd4bcf` |
+
+Both archives use `<GB id>.data` filenames and contain the same set of 1,230 IDs. Every ID in `outputs.xlsx` has both an optimized and an unoptimized structure; 31 additional structure pairs do not have a complete released property row. See [`results/README.md`](results/README.md) and [`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md) for provenance, units, archive layout, and integrity checks.
+
+The DeePMD checkpoint, trajectories, and scheduler logs are not redistributed here. Cite the original potential publication and follow its license.
 
 ## Output contract
 
