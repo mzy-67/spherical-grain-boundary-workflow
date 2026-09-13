@@ -10,7 +10,7 @@
 
 ## Unreleased
 
-- Added the 1,199-row property workbook and documented GitHub release assets containing 1,230 optimized/unoptimized structure pairs.
+- Added the final 1,211-row property workbook and documented GitHub release assets containing 1,230 optimized/unoptimized structure pairs.
 - Made the LAMMPS executable and manuscript MD protocol configurable.
 - Added fail-fast handling for unsuccessful LAMMPS runs.
 - Documented and tested the sphere–slab volume used for the Nernst-Einstein conversion.
