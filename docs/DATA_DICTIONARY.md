@@ -11,7 +11,7 @@
 | `plane_h`, `plane_k`, `plane_l` | GB-plane normal components |
 | `gb_type` | Macroscopic classification: tilt, asymmetric tilt, twist, mixed, or unclassified |
 
-## Zenodo `outputs.xlsx`
+## `results/outputs.xlsx`
 
 `outputs.xlsx` contains one worksheet (`Sheet1`) with a header row and 1,199 data rows. Each `id` is unique. The IDs range from 1 to 1,291; 92 sampled candidates without a complete released property row are absent from this table.
 
@@ -32,4 +32,8 @@
 | `Ea_eV` | Arrhenius migration activation energy | eV |
 | `sigma_T_k_25` | Ionic conductivity extrapolated to 298.15 K | S m⁻¹ |
 
-The conductivity values use the Nernst–Einstein relation and the analyzed Li population and sphere–slab intersection volume documented in the repository README and workflow source.
+The conductivity values use the Nernst–Einstein relation and the analyzed Li population and sphere–slab intersection volume documented in the repository README and workflow source. Despite the legacy column name, `sigma_T_k_25` denotes an Arrhenius extrapolation to 298.15 K (25 °C), not a direct simulation.
+
+## GitHub release structure archives
+
+The `dataset-v1.0` release also provides `opt-data1.zip` and `no-opt-data1.zip`. Each archive contains 1,230 LAMMPS data files named by the stable GB `id`; the former contains optimized structures and the latter the corresponding unoptimized structures. Details and checksums are recorded in `results/README.md`.
