@@ -13,7 +13,7 @@
 
 ## `results/outputs.xlsx`
 
-`outputs.xlsx` contains one worksheet (`Sheet1`) with a header row and 1,199 data rows. Each `id` is unique. The IDs range from 1 to 1,291; 92 sampled candidates without a complete released property row are absent from this table.
+`outputs.xlsx` contains one worksheet (`Sheet1`) with a header row and 1,199 data rows. Each `id` is unique. Starting from 1,291 sampled candidates, Bayesian optimization succeeded for 1,230 and failed for 61; MSD calculations then succeeded for 1,199 and failed for 31. The workbook contains the 1,199 candidates that completed MSD analysis.
 
 | Column | Meaning | Unit |
 | --- | --- | --- |
@@ -36,4 +36,4 @@ The conductivity values use the Nernst–Einstein relation and the analyzed Li p
 
 ## GitHub release structure archives
 
-The `dataset-v1.0` release also provides `opt-data1.zip` and `no-opt-data1.zip`. Each archive contains 1,230 LAMMPS data files named by the stable GB `id`; the former contains optimized structures and the latter the corresponding unoptimized structures. Details and checksums are recorded in `results/README.md`.
+The `dataset-v1.0` release also provides `no-opt-data1.zip` and `opt-data1.zip`. Each archive contains 1,230 LAMMPS data files named by the stable GB `id`; the former contains structures before Bayesian optimization and the latter contains the corresponding structures after Bayesian optimization. The Excel `id` maps directly to the numeric filename in both archives. Details and checksums are recorded in `results/README.md`.

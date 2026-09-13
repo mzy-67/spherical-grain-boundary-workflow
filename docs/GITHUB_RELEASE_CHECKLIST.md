@@ -9,6 +9,6 @@ Before the first public release:
 5. Confirm the Nernst-Einstein region remains a radius-35 Å sphere intersected by a centered 30 Å-thick slab, as stated in the manuscript.
 6. Run `python scripts/validate_repository.py` in the `dp` environment.
 7. Create the initial commit and push to GitHub.
-8. Make the repository public, enable it in Zenodo, and create a GitHub release whose tag matches the package and citation version (currently `v0.2.0`).
-9. Add the resulting software and dataset DOIs to `README.md`, `CITATION.cff`, and the manuscript.
-10. Revoke any temporary Zenodo token and remove any temporary write-enabled GitHub Deploy Key.
+8. Make the repository public and create a tagged GitHub release.
+9. Add the tagged software/data release URL to `README.md`, `CITATION.cff`, and the manuscript data-availability statement.
+10. Remove any temporary write-enabled GitHub Deploy Key.
