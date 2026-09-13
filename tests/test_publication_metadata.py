@@ -21,7 +21,7 @@ def test_release_metadata_agrees():
 
 def test_llzo_dataset_counts_remain_documented():
     readme = (ROOT / "README.md").read_text()
-    for count in ("1,291", "1,230", "1,199", "61", "31"):
+    for count in ("1,291", "1,230", "1,211", "61", "19"):
         assert count in readme
 
 
