@@ -103,7 +103,7 @@ Remove `--dry-run` to submit. Row indices are zero-based and `--stop-row` is exc
 
 ## LLZO reproduction example
 
-The original Li7La3Zr2O12 inputs and its 1,291-orientation table remain available as an example. Copy `examples/llzo/config.yaml`, set the authorized DeePMD checkpoint and your scheduler settings, then run the same submit command. The released [`results/outputs.xlsx`](results/outputs.xlsx) workbook contains 1,199 completed records; 92 sampled IDs without a complete property row are not represented in that table.
+The original Li7La3Zr2O12 inputs and its 1,291-orientation table remain available as an example. Copy `examples/llzo/config.yaml`, set the authorized DeePMD checkpoint and your scheduler settings, then run the same submit command. Bayesian optimization succeeded for 1,230 candidates and failed for 61. MSD calculations subsequently succeeded for 1,199 of those optimized structures and failed for 31. The released [`results/outputs.xlsx`](results/outputs.xlsx) workbook therefore contains 1,199 completed records.
 
 ## Results dataset
 
@@ -115,7 +115,7 @@ The compact result table is version-controlled in this repository. The two large
 | [`opt-data1.zip`](https://github.com/mzy-67/spherical-grain-boundary-workflow/releases/download/dataset-v1.0/opt-data1.zip) | Optimized LAMMPS structure files | 1,230 | `a759fef19caa2f69bfd861cbc34d4b82ce02ecaace5b701cc9bf844568fcbfb2` |
 | [`no-opt-data1.zip`](https://github.com/mzy-67/spherical-grain-boundary-workflow/releases/download/dataset-v1.0/no-opt-data1.zip) | Corresponding unoptimized LAMMPS structure files | 1,230 | `808bb010027f4adf326041cd3857db5351a1e27b002c6efe6b571714f7bd4bcf` |
 
-Both archives use `<GB id>.data` filenames and contain the same set of 1,230 IDs. Every ID in `outputs.xlsx` has both an optimized and an unoptimized structure; 31 additional structure pairs do not have a complete released property row. See [`results/README.md`](results/README.md) and [`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md) for provenance, units, archive layout, and integrity checks.
+Both archives use `<GB id>.data` filenames and contain the same set of 1,230 IDs that completed Bayesian optimization. `no-opt-data1.zip` contains the pre-optimization structures and `opt-data1.zip` contains their corresponding post-optimization structures. The `id` column in `outputs.xlsx` maps directly to the numeric `.data` filename in both archives. The workbook contains the 1,199 structures that also completed MSD analysis; the remaining 31 optimized structures failed during MSD calculation. See [`results/README.md`](results/README.md) and [`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md) for provenance, units, archive layout, and integrity checks.
 
 The DeePMD checkpoint, trajectories, and scheduler logs are not redistributed here. Cite the original potential publication and follow its license.
 
